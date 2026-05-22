@@ -8,7 +8,7 @@ GET  /api/listings          → paginated listing results
 POST /api/scrape            → start a background scrape job
 GET  /api/status            → scrape-job status
 GET  /api/history           → scrape log (last N runs)
-GET  /api/cities            → available cities
+GET  /api/cities            → available Charlotte area filters
 """
 
 import logging
@@ -27,7 +27,7 @@ from database import (
     log_scrape,
     upsert_listings,
 )
-from scraper import SUPPORTED_CITIES, scrape_craigslist_housing
+from scraper import CHARLOTTE_AREAS, SCRAPE_SOURCES, CHARLOTTE_ZIP_REGIONS, scrape_charlotte_houses
 
 logging.basicConfig(
     level=logging.INFO,
@@ -41,38 +41,43 @@ app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="/")
 CORS(app)
 
 # ---------------------------------------------------------------------------
-# Scrape state (simple in-process tracker – sufficient for a single worker)
+# Scrape state
 # ---------------------------------------------------------------------------
 
 _scrape_lock = threading.Lock()
 scrape_status: dict = {
-    "running": False,
+    "running":  False,
     "last_run": None,
-    "message": "No scrape run yet.",
+    "message":  "No scrape run yet.",
 }
 
 
-def _run_scrape(city: str, max_pages: int) -> None:
+def _run_scrape(source: str, listing_type: str, max_pages: int) -> None:
     global scrape_status
     started_at = datetime.now(timezone.utc).isoformat()
 
+    source_label = SCRAPE_SOURCES.get(source, source)
+    type_label   = "for sale" if listing_type == "for_sale" else "for rent"
+
     with _scrape_lock:
         scrape_status["running"] = True
-        scrape_status["message"] = f"Scraping {SUPPORTED_CITIES.get(city, city)}…"
+        scrape_status["message"] = (
+            f"Scraping {source_label} — {type_label} listings in Charlotte…"
+        )
 
     try:
-        listings = scrape_craigslist_housing(city=city, max_pages=max_pages)
-        new_count = upsert_listings(listings)
-        completed_at = datetime.now(timezone.utc).isoformat()
-        log_scrape(city, len(listings), new_count, started_at, completed_at, "success")
+        listings   = scrape_charlotte_houses(source, listing_type, max_pages)
+        new_count  = upsert_listings(listings)
+        completed  = datetime.now(timezone.utc).isoformat()
+        log_scrape(source, len(listings), new_count, started_at, completed, "success")
         msg = f"Done. Found {len(listings)} listings, {new_count} new."
         logger.info(msg)
         with _scrape_lock:
-            scrape_status["message"] = msg
-            scrape_status["last_run"] = completed_at
+            scrape_status["message"]  = msg
+            scrape_status["last_run"] = completed
     except Exception as exc:  # noqa: BLE001
-        completed_at = datetime.now(timezone.utc).isoformat()
-        log_scrape(city, 0, 0, started_at, completed_at, "error", str(exc))
+        completed = datetime.now(timezone.utc).isoformat()
+        log_scrape(source, 0, 0, started_at, completed, "error", str(exc))
         msg = f"Scrape failed: {exc}"
         logger.error(msg)
         with _scrape_lock:
@@ -97,13 +102,25 @@ def index():
 
 @app.route("/api/listings", methods=["GET"])
 def api_listings():
-    city = request.args.get("city") or None
-    bedrooms = request.args.get("bedrooms") or None
-    limit = min(int(request.args.get("limit", 50)), 200)
-    offset = max(int(request.args.get("offset", 0)), 0)
+    city         = request.args.get("city")         or None
+    bedrooms     = request.args.get("bedrooms")     or None
+    bathrooms    = request.args.get("bathrooms")    or None
+    min_price    = request.args.get("min_price")    or None
+    max_price    = request.args.get("max_price")    or None
+    listing_type = request.args.get("listing_type") or None
+    limit        = min(int(request.args.get("limit",  50)), 200)
+    offset       = max(int(request.args.get("offset",  0)),   0)
 
-    data = get_listings(city=city, bedrooms=bedrooms, limit=limit, offset=offset)
-    total = get_listing_count(city=city)
+    data  = get_listings(
+        city=city, bedrooms=bedrooms, bathrooms=bathrooms,
+        min_price=min_price, max_price=max_price,
+        limit=limit, offset=offset, listing_type=listing_type,
+    )
+    total = get_listing_count(
+        city=city, bathrooms=bathrooms,
+        min_price=min_price, max_price=max_price,
+        listing_type=listing_type,
+    )
 
     return jsonify({"listings": data, "total": total, "limit": limit, "offset": offset})
 
@@ -114,17 +131,28 @@ def api_scrape():
         if scrape_status["running"]:
             return jsonify({"error": "A scrape is already in progress."}), 409
 
-    body = request.get_json(silent=True) or {}
-    city = body.get("city", "sfbay")
-    if city not in SUPPORTED_CITIES:
-        return jsonify({"error": f"Unknown city '{city}'."}), 400
+    body         = request.get_json(silent=True) or {}
+    source       = body.get("source", "redfin")
+    listing_type = body.get("listing_type", "for_sale")
+    max_pages    = min(int(body.get("max_pages", 2)), 5)
 
-    max_pages = min(int(body.get("max_pages", 2)), 5)
+    if source not in SCRAPE_SOURCES:
+        return jsonify({"error": f"Unknown source '{source}'."}), 400
+    if listing_type not in ("for_sale", "for_rent"):
+        return jsonify({"error": f"Unknown listing_type '{listing_type}'."}), 400
 
-    thread = threading.Thread(target=_run_scrape, args=(city, max_pages), daemon=True)
+    thread = threading.Thread(
+        target=_run_scrape,
+        args=(source, listing_type, max_pages),
+        daemon=True,
+    )
     thread.start()
 
-    return jsonify({"message": f"Scrape started for {SUPPORTED_CITIES[city]}.", "city": city})
+    return jsonify({
+        "message":      f"Scrape started — {SCRAPE_SOURCES[source]}, {listing_type}.",
+        "source":       source,
+        "listing_type": listing_type,
+    })
 
 
 @app.route("/api/status", methods=["GET"])
@@ -140,7 +168,8 @@ def api_history():
 
 @app.route("/api/cities", methods=["GET"])
 def api_cities():
-    cities = [{"value": k, "label": v} for k, v in SUPPORTED_CITIES.items()]
+    """Return Charlotte-area filter options."""
+    cities = [{"value": k, "label": v} for k, v in CHARLOTTE_AREAS.items()]
     return jsonify(cities)
 
 

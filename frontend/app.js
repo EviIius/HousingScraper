@@ -1,17 +1,21 @@
-/* app.js – Housing Scraper frontend logic */
+/* app.js – Charlotte House Finder frontend logic */
 
-const API = "";          // same origin; Flask serves both API and static files
+const API       = "";   // same origin; Flask serves both API and static files
 const PAGE_SIZE = 24;
 
 // ── State ─────────────────────────────────────────────────────────────────
 let state = {
-  listings: [],
-  total: 0,
-  offset: 0,
-  filterCity: "",
-  filterBedrooms: "",
-  scraping: false,
-  pollTimer: null,
+  listings:        [],
+  total:           0,
+  offset:          0,
+  filterCity:      "",
+  filterType:      "",
+  filterBedrooms:  "",
+  filterBathrooms: "",
+  filterMinPrice:  "",
+  filterMaxPrice:  "",
+  scraping:        false,
+  pollTimer:       null,
 };
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
@@ -32,7 +36,6 @@ const btnNext       = $("btn-next");
 // ── Utilities ─────────────────────────────────────────────────────────────
 function show(el)  { el.classList.remove("hidden"); }
 function hide(el)  { el.classList.add("hidden"); }
-function toggle(el, visible) { visible ? show(el) : hide(el); }
 
 function fmtDate(iso) {
   if (!iso) return "";
@@ -43,9 +46,26 @@ function fmtDate(iso) {
   } catch { return iso; }
 }
 
-function cityLabel(cities, value) {
-  const c = cities.find(c => c.value === value);
-  return c ? c.label : value;
+function fmtPrice(raw) {
+  if (!raw || raw === "N/A") return "Price N/A";
+  const n = parseFloat(String(raw).replace(/,/g, ""));
+  if (isNaN(n)) return raw;
+  return "$" + n.toLocaleString();
+}
+
+function esc(str) {
+  if (str == null) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g,  "&lt;")
+    .replace(/>/g,  "&gt;")
+    .replace(/"/g,  "&quot;");
+}
+
+// Debounce helper for price inputs
+function debounce(fn, ms) {
+  let t;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────
@@ -58,25 +78,11 @@ async function apiFetch(path, opts = {}) {
   return res.json();
 }
 
-// ── Cities ────────────────────────────────────────────────────────────────
-let citiesCache = [];
-
+// ── Areas (filter dropdown) ───────────────────────────────────────────────
 async function loadCities() {
-  citiesCache = await apiFetch("/api/cities");
-
-  // populate filter select
-  const filterSel = $("filter-city");
-  citiesCache.forEach(c => {
-    const opt = new Option(c.label, c.value);
-    filterSel.append(opt);
-  });
-
-  // populate scrape modal select
-  const scrapeSel = $("scrape-city");
-  citiesCache.forEach(c => {
-    const opt = new Option(c.label, c.value);
-    scrapeSel.append(opt);
-  });
+  const areas = await apiFetch("/api/cities");
+  const sel   = $("filter-city");
+  areas.forEach(a => sel.append(new Option(a.label, a.value)));
 }
 
 // ── Listings ──────────────────────────────────────────────────────────────
@@ -87,12 +93,13 @@ async function loadListings() {
   hide(pagination);
   show(stateLoading);
 
-  const params = new URLSearchParams({
-    limit: PAGE_SIZE,
-    offset: state.offset,
-  });
-  if (state.filterCity)     params.set("city",     state.filterCity);
-  if (state.filterBedrooms) params.set("bedrooms", state.filterBedrooms);
+  const params = new URLSearchParams({ limit: PAGE_SIZE, offset: state.offset });
+  if (state.filterCity)      params.set("city",         state.filterCity);
+  if (state.filterType)      params.set("listing_type", state.filterType);
+  if (state.filterBedrooms)  params.set("bedrooms",     state.filterBedrooms);
+  if (state.filterBathrooms) params.set("bathrooms",    state.filterBathrooms);
+  if (state.filterMinPrice)  params.set("min_price",    state.filterMinPrice);
+  if (state.filterMaxPrice)  params.set("max_price",    state.filterMaxPrice);
 
   try {
     const data = await apiFetch(`/api/listings?${params}`);
@@ -119,12 +126,10 @@ function renderListings() {
   state.listings.forEach(l => grid.appendChild(buildCard(l)));
   show(grid);
 
-  // Result count
   const from = state.offset + 1;
   const to   = Math.min(state.offset + state.listings.length, state.total);
-  resultCount.textContent = `Showing ${from}–${to} of ${state.total.toLocaleString()} listings`;
+  resultCount.textContent = `${from}–${to} of ${state.total.toLocaleString()} listings`;
 
-  // Pagination
   const totalPages  = Math.ceil(state.total / PAGE_SIZE);
   const currentPage = Math.floor(state.offset / PAGE_SIZE) + 1;
   if (totalPages > 1) {
@@ -139,58 +144,75 @@ function buildCard(l) {
   const card = document.createElement("article");
   card.className = "card";
 
-  const price = l.price && l.price !== "N/A" ? l.price : "Price N/A";
-  const cLabel = cityLabel(citiesCache, l.city) || l.city || "";
+  // Split "Address – City, State" into two lines
+  const parts      = (l.title || "").split(" \u2013 ");
+  const addrLine   = parts[0] || l.title || "Untitled";
+  const cityLine   = parts[1] || "";
 
-  const metaItems = [];
-  if (l.location && l.location !== "N/A")
-    metaItems.push(`<span class="card-meta-item">📍 ${esc(l.location)}</span>`);
-  if (l.bedrooms && l.bedrooms !== "N/A")
-    metaItems.push(`<span class="card-meta-item">🛏 ${esc(l.bedrooms)} br</span>`);
-  if (l.sqft && l.sqft !== "N/A")
-    metaItems.push(`<span class="card-meta-item">📐 ${esc(l.sqft)} ft²</span>`);
+  // Type badge
+  const typeBadge = l.listing_type === "for_rent"
+    ? `<span class="type-badge type-rent">For Rent</span>`
+    : `<span class="type-badge type-sale">For Sale</span>`;
 
-  const scraped = l.date_scraped ? `Scraped ${fmtDate(l.date_scraped)}` : "";
+  // Source pill (overlaid on image)
+  const srcLabel = { redfin: "Redfin", realtor: "Realtor.com" }[l.source] || l.source;
+  const srcBadge = l.source
+    ? `<span class="source-tag source-${esc(l.source)}">${esc(srcLabel)}</span>`
+    : "";
+
+  // Property type
+  const propTag = l.property_type
+    ? `<span class="prop-tag">${esc(l.property_type)}</span>`
+    : "";
+
+  // Meta row
+  const meta = [];
+  if (l.bedrooms  && l.bedrooms  !== "N/A") meta.push(`<span class="meta-chip">🛏 ${esc(l.bedrooms)} bd</span>`);
+  if (l.bathrooms && l.bathrooms !== "N/A") meta.push(`<span class="meta-chip">🚿 ${esc(l.bathrooms)} ba</span>`);
+  if (l.sqft      && l.sqft      !== "N/A") meta.push(`<span class="meta-chip">📐 ${Number(l.sqft).toLocaleString()} ft²</span>`);
+
+  // Footer date
+  const dateStr = l.date_posted ? `Listed ${fmtDate(l.date_posted)}` : (l.date_scraped ? `Scraped ${fmtDate(l.date_scraped)}` : "");
   const link    = l.url
-    ? `<a class="card-link" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">View →</a>`
+    ? `<a class="card-link" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">View Listing →</a>`
     : "";
 
   card.innerHTML = `
-    <div class="card-header">
-      <span class="card-price">${esc(price)}</span>
-      ${cLabel ? `<span class="card-city-tag">${esc(cLabel)}</span>` : ""}
+    <div class="card-img">
+      ${srcBadge}
+      <div class="card-img-icon">🏠</div>
     </div>
-    <div class="card-body">
-      <p class="card-title">${esc(l.title || "Untitled")}</p>
-      <div class="card-meta">${metaItems.join("")}</div>
+    <div class="card-info">
+      <div class="card-price-row">
+        <span class="card-price">${esc(fmtPrice(l.price))}</span>
+        ${typeBadge}
+      </div>
+      <p class="card-address">${esc(addrLine)}</p>
+      ${cityLine ? `<p class="card-location">${esc(cityLine)}</p>` : ""}
+    </div>
+    <div class="card-details">
+      <div class="card-meta">${meta.join("")}</div>
+      ${propTag}
     </div>
     <div class="card-footer">
-      <span class="card-date">${scraped}</span>
+      <span class="card-date">${dateStr}</span>
       ${link}
     </div>
   `;
   return card;
 }
 
-function esc(str) {
-  if (str == null) return "";
-  return String(str)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
 // ── Scrape ────────────────────────────────────────────────────────────────
 async function startScrape() {
-  const city     = $("scrape-city").value;
-  const maxPages = parseInt($("scrape-pages").value, 10) || 2;
+  const source    = $("scrape-source").value;
+  const listType  = $("scrape-type").value;
+  const maxPages  = parseInt($("scrape-pages").value, 10) || 2;
 
   try {
     await apiFetch("/api/scrape", {
-      method: "POST",
+      method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ city, max_pages: maxPages }),
+      body:    JSON.stringify({ source, listing_type: listType, max_pages: maxPages }),
     });
     closeModal("modal-scrape");
     startPolling();
@@ -203,24 +225,20 @@ async function startScrape() {
 function startPolling() {
   if (state.pollTimer) clearInterval(state.pollTimer);
   state.pollTimer = setInterval(pollStatus, 3000);
-  pollStatus(); // immediate first check
+  pollStatus();
 }
 
 async function pollStatus() {
   try {
     const s = await apiFetch("/api/status");
     updateStatusBadge(s);
-
     if (!s.running) {
       clearInterval(state.pollTimer);
       state.pollTimer = null;
-      // Reload listings to show new results
-      state.offset = 0;
+      state.offset    = 0;
       await loadListings();
     }
-  } catch {
-    // silently ignore poll errors
-  }
+  } catch { /* silently ignore */ }
 }
 
 function updateStatusBadge(s) {
@@ -228,7 +246,7 @@ function updateStatusBadge(s) {
   if (s.running) {
     statusBadge.classList.add("status-running");
     statusBadge.textContent = "Scraping…";
-  } else if (s.message && s.message.startsWith("Error")) {
+  } else if (s.message && s.message.startsWith("Scrape failed")) {
     statusBadge.classList.add("status-error");
     statusBadge.textContent = "Error";
   } else if (s.last_run) {
@@ -255,16 +273,16 @@ async function showHistory() {
     const tableRows = rows.map(r => `
       <tr>
         <td>${fmtDate(r.started_at)}</td>
-        <td>${esc(cityLabel(citiesCache, r.city) || r.city)}</td>
+        <td>${esc(r.city)}</td>
         <td>${r.listings_found ?? 0}</td>
         <td>${r.listings_new ?? 0}</td>
-        <td><span class="pill ${r.status === 'success' ? 'pill-success' : 'pill-error'}">${esc(r.status)}</span></td>
+        <td><span class="pill ${r.status === "success" ? "pill-success" : "pill-error"}">${esc(r.status)}</span></td>
       </tr>
     `).join("");
     wrap.innerHTML = `
       <table class="history-table">
         <thead>
-          <tr><th>Date</th><th>City</th><th>Found</th><th>New</th><th>Status</th></tr>
+          <tr><th>Date</th><th>Source</th><th>Found</th><th>New</th><th>Status</th></tr>
         </thead>
         <tbody>${tableRows}</tbody>
       </table>
@@ -280,30 +298,26 @@ function closeModal(id) { hide($(id)); }
 
 // ── Event wiring ──────────────────────────────────────────────────────────
 function wireEvents() {
-  // Scrape button → open modal
   $("btn-scrape").addEventListener("click", () => openModal("modal-scrape"));
-
-  // Confirm scrape
   $("btn-scrape-confirm").addEventListener("click", startScrape);
-
-  // History
   $("btn-history").addEventListener("click", showHistory);
 
-  // Close buttons (any button with class modal-close)
   document.querySelectorAll(".modal-close").forEach(btn => {
     btn.addEventListener("click", e => closeModal(e.target.dataset.modal));
   });
-
-  // Close modal on overlay click
   document.querySelectorAll(".modal-overlay").forEach(overlay => {
     overlay.addEventListener("click", e => {
       if (e.target === overlay) closeModal(overlay.id);
     });
   });
 
-  // Filters
   $("filter-city").addEventListener("change", e => {
     state.filterCity = e.target.value;
+    state.offset = 0;
+    loadListings();
+  });
+  $("filter-type").addEventListener("change", e => {
+    state.filterType = e.target.value;
     state.offset = 0;
     loadListings();
   });
@@ -312,16 +326,39 @@ function wireEvents() {
     state.offset = 0;
     loadListings();
   });
-  $("btn-clear").addEventListener("click", () => {
-    $("filter-city").value     = "";
-    $("filter-bedrooms").value = "";
-    state.filterCity     = "";
-    state.filterBedrooms = "";
+  $("filter-bathrooms").addEventListener("change", e => {
+    state.filterBathrooms = e.target.value;
     state.offset = 0;
     loadListings();
   });
 
-  // Pagination
+  const reloadDebounced = debounce(() => { state.offset = 0; loadListings(); }, 400);
+  $("filter-min-price").addEventListener("input", e => {
+    state.filterMinPrice = e.target.value;
+    reloadDebounced();
+  });
+  $("filter-max-price").addEventListener("input", e => {
+    state.filterMaxPrice = e.target.value;
+    reloadDebounced();
+  });
+
+  $("btn-clear").addEventListener("click", () => {
+    $("filter-city").value      = "";
+    $("filter-type").value      = "";
+    $("filter-bedrooms").value  = "";
+    $("filter-bathrooms").value = "";
+    $("filter-min-price").value = "";
+    $("filter-max-price").value = "";
+    state.filterCity      = "";
+    state.filterType      = "";
+    state.filterBedrooms  = "";
+    state.filterBathrooms = "";
+    state.filterMinPrice  = "";
+    state.filterMaxPrice  = "";
+    state.offset = 0;
+    loadListings();
+  });
+
   btnPrev.addEventListener("click", () => {
     state.offset = Math.max(0, state.offset - PAGE_SIZE);
     loadListings();
@@ -333,7 +370,6 @@ function wireEvents() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
-  // Keyboard: ESC closes modal
   document.addEventListener("keydown", e => {
     if (e.key === "Escape") {
       document.querySelectorAll(".modal-overlay:not(.hidden)").forEach(m => closeModal(m.id));
@@ -347,7 +383,6 @@ async function init() {
   await loadCities();
   await loadListings();
 
-  // Check if a scrape is already running
   try {
     const s = await apiFetch("/api/status");
     updateStatusBadge(s);

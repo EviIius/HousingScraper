@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Housing Scraper</title>
+  <title>Charlotte House Finder</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -12,12 +12,12 @@
     <div class="header-inner">
       <div class="header-brand">
         <span class="header-icon">🏠</span>
-        <h1 class="header-title">Housing Scraper</h1>
-        <span class="header-sub">Craigslist apartment listings</span>
+        <h1 class="header-title">Charlotte House Finder</h1>
+        <span class="header-sub">Zillow &amp; Redfin listings — Charlotte, NC</span>
       </div>
       <div class="header-actions">
         <div id="status-badge" class="status-badge status-idle">Idle</div>
-        <button id="btn-scrape" class="btn btn-primary" title="Fetch latest listings from Craigslist">
+        <button id="btn-scrape" class="btn btn-primary" title="Fetch latest listings">
           <span class="btn-icon">⟳</span> Scrape Now
         </button>
         <button id="btn-history" class="btn btn-secondary" title="Show scrape history">History</button>
@@ -29,10 +29,20 @@
   <div id="modal-scrape" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-scrape-title">
     <div class="modal-box">
       <h2 id="modal-scrape-title" class="modal-title">Start a New Scrape</h2>
-      <label class="form-label" for="scrape-city">City</label>
-      <select id="scrape-city" class="form-select"></select>
 
-      <label class="form-label" for="scrape-pages">Pages to scrape <span class="hint">(1 page ≈ 120 listings)</span></label>
+      <label class="form-label" for="scrape-source">Source</label>
+      <select id="scrape-source" class="form-select">
+        <option value="redfin">Redfin</option>
+        <option value="realtor">Realtor.com</option>
+      </select>
+
+      <label class="form-label" for="scrape-type">Listing Type</label>
+      <select id="scrape-type" class="form-select">
+        <option value="for_sale">For Sale</option>
+        <option value="for_rent">For Rent</option>
+      </select>
+
+      <label class="form-label" for="scrape-pages">Pages to scrape <span class="hint">(1 page ≈ 200 listings)</span></label>
       <input id="scrape-pages" class="form-input" type="number" min="1" max="5" value="2" />
 
       <div class="modal-actions">
@@ -59,22 +69,49 @@
   <div class="filters-bar">
     <div class="filters-inner">
       <div class="filter-group">
-        <label class="form-label" for="filter-city">City</label>
+        <label class="form-label" for="filter-city">Area</label>
         <select id="filter-city" class="form-select filter-select">
-          <option value="">All cities</option>
+          <option value="">All Areas</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="form-label" for="filter-type">Type</label>
+        <select id="filter-type" class="form-select filter-select">
+          <option value="">For Sale &amp; Rent</option>
+          <option value="for_sale">For Sale</option>
+          <option value="for_rent">For Rent</option>
         </select>
       </div>
       <div class="filter-group">
         <label class="form-label" for="filter-bedrooms">Bedrooms</label>
         <select id="filter-bedrooms" class="form-select filter-select">
           <option value="">Any</option>
-          <option value="1">1 br</option>
-          <option value="2">2 br</option>
-          <option value="3">3 br</option>
-          <option value="4">4+ br</option>
+          <option value="1">1+</option>
+          <option value="2">2+</option>
+          <option value="3">3+</option>
+          <option value="4">4+</option>
+          <option value="5">5+</option>
         </select>
       </div>
-      <button id="btn-clear" class="btn btn-secondary btn-sm">Clear Filters</button>
+      <div class="filter-group">
+        <label class="form-label" for="filter-bathrooms">Bathrooms</label>
+        <select id="filter-bathrooms" class="form-select filter-select">
+          <option value="">Any</option>
+          <option value="1">1+</option>
+          <option value="2">2+</option>
+          <option value="3">3+</option>
+          <option value="4">4+</option>
+        </select>
+      </div>
+      <div class="filter-group filter-group--price">
+        <label class="form-label">Price Range</label>
+        <div class="price-range-row">
+          <input id="filter-min-price" class="form-input price-input" type="number" placeholder="Min $" min="0" step="25000" />
+          <span class="price-sep">–</span>
+          <input id="filter-max-price" class="form-input price-input" type="number" placeholder="Max $" min="0" step="25000" />
+        </div>
+      </div>
+      <button id="btn-clear" class="btn btn-secondary btn-sm">Clear</button>
       <span id="result-count" class="result-count"></span>
     </div>
   </div>
@@ -93,7 +130,7 @@
     <div id="state-empty" class="state-panel hidden">
       <p class="state-emoji">🏚️</p>
       <p class="state-title">No listings found</p>
-      <p class="state-hint">Try a different city or press <strong>Scrape Now</strong> to fetch listings.</p>
+      <p class="state-hint">Try different filters or press <strong>Scrape Now</strong> to fetch listings.</p>
     </div>
     <div id="state-error" class="state-panel hidden">
       <p class="state-emoji">⚠️</p>
@@ -111,7 +148,7 @@
 
   <!-- ===== FOOTER ===== -->
   <footer class="site-footer">
-    <p>Data sourced from Craigslist. For personal, non-commercial use only.</p>
+    <p>Data sourced from Redfin &amp; Zillow. For personal, non-commercial use only.</p>
   </footer>
 
   <script src="app.js"></script>

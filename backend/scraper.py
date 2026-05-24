@@ -862,7 +862,8 @@ def scrape_zillow_charlotte(
     def _scrape_page(zipcode: int, page: int) -> tuple[list[dict], bool]:
         """Fetch a single page in a fresh browser session. Returns (rows, was_blocked)."""
         page_suffix = "" if page == 1 else f"{page}_p/"
-        url = f"{_ZILLOW_BASE}/{path_prefix}/{zipcode}_rb/{price_seg}{page_suffix}"
+        # Sort newest-first so freshly listed properties always appear on page 1
+        url = f"{_ZILLOW_BASE}/{path_prefix}/{zipcode}_rb/{price_seg}days_sort/{page_suffix}"
         for attempt in range(1, 3):
             try:
                 with _open_uc_session() as sb:

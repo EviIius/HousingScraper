@@ -362,7 +362,7 @@ def get_scrape_history(limit: int = 10, db_path: str = DB_PATH) -> list[dict]:
 # Zillow ZIP rotation
 # ---------------------------------------------------------------------------
 
-def get_zillow_zip_queue(max_zips: int = 4, db_path: str = DB_PATH) -> list[int]:
+def get_zillow_zip_queue(max_zips: int = 8, db_path: str = DB_PATH) -> list[int]:
     """
     Return up to max_zips ZIP codes prioritised for the next Zillow scrape.
 

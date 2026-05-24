@@ -167,7 +167,7 @@ def _run_scrape(
         try:
             # Fast plain-HTTP sources can handle many more pages without
             # slowing the scrape — give them a higher floor.
-            _SRC_MIN_PAGES = {"searchcharlotte": 25, "estately": 12, "redfin": 10}
+            _SRC_MIN_PAGES = {"searchcharlotte": 25, "estately": 12, "redfin": 10, "zillow": 2}
             src_max_pages = max(max_pages, _SRC_MIN_PAGES.get(src, 0))
 
             # Zillow uses ZIP rotation: pick the oldest-scraped ZIPs this run
